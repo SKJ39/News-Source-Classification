@@ -66,6 +66,7 @@ def _get_urls(sitemap_url: str, domain: str) -> List[str]:
     response.raise_for_status()
     soup = BeautifulSoup(response.content, "xml")
     
+    # In a sitemap, URLs are typically found within <loc> tags
     for loc in soup.find_all("loc"):
         url = loc.text.strip()
         if urlparse(url).netloc.endswith(domain):
@@ -113,7 +114,7 @@ def _process(path: str, urls: List[str], labels: List[str]) -> None:
         if not row or not row[0].strip():
             continue
         parsed = urlparse(row[0].strip())
-        label = _label_from_host(parsed.netloc.lower())
+        label = _label_from_host(parsed.netloc.lower())         # netloc is the domain name, e.g., "www.foxnews.com"
         if parsed.netloc and not label:
             continue
         link = _slug_to_path(parsed.path)
