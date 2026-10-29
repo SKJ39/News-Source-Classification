@@ -22,6 +22,10 @@ NON_ARTICLE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js", ".js
 def _slug_to_path(path: str) -> str:
     """
     Convert a URL path to a slug-like format.
+    The website name, section, and any word containing a digit (such as article IDs) are removed, 
+    leaving only the headline portion of each URL.
+    The leading (like https) and trailing extensions (like .html, .shtml, .php) are also removed. 
+    The resulting slug is returned in lowercase.
     """
     segments = [s for s in path.split("/") if s]
     last = unquote(segments[-1]) if segments else ""
