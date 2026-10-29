@@ -10,6 +10,8 @@ from bs4 import BeautifulSoup
 from xml.etree import ElementTree as ET
 from collections import Counter
 
+VALIDATION = True
+
 def _slug_to_path(path: str) -> str:
     """
     Convert a URL path to a slug-like format.
@@ -115,7 +117,20 @@ def _fetch_url_rows() -> List[str]:
     rows.extend([[u] for u in r.text.splitlines()])
     return rows
 
+def drop_nbc(urls, labels, n=1000):
+    """
+    Drop a random sample of NBC rows to reduce class imbalance.
+    """
+    nbc = [idx for idx, domain in enumerate(labels) if domain == "NBC"]
+    nbc_indices = set(random.sample(nbc, min(n, len(nbc))))
+    urls = [url for idx, url in enumerate(urls) if idx not in nbc_indices]
+    labels = [domain for idx, domain in enumerate(labels) if idx not in nbc_indices]
+    return urls, labels
+
 def _process(path: str, urls: List[str], labels: List[str]) -> None:
+    """
+    Process the CSV file and fetch additional URLs from web feeds.
+    """
     with open(path, "r") as f:
         rows = list(csv.reader(f))
     if rows and rows[0] and rows[0][0].strip().lower() == "url":
@@ -124,6 +139,11 @@ def _process(path: str, urls: List[str], labels: List[str]) -> None:
     rows.extend(_fetch_url_rows())
     # Clean the list of URLS
     rows = _clean(rows)
+
+    # Data validation
+    if VALIDATION:
+        for u in random.sample(rows, min(100, len(rows))):
+            print(u)
 
     for row in rows:
         # Skip links from other websites. Links WITHOUT a website name are kept, 
@@ -160,6 +180,9 @@ def prepare_data(path: str) -> Tuple[torch.Tensor, torch.Tensor]:
     urls: List[str] = []
     labels: List[str] = []
     _process(path, urls, labels)
+
+    # To ease class imbalance, drop some NBC rows
+    urls, labels = drop_nbc(urls, labels, n=1000)
     return urls, labels
 
 def tmp(y):
