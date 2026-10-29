@@ -8,6 +8,7 @@ import random
 import requests
 from bs4 import BeautifulSoup
 from xml.etree import ElementTree as ET
+from collections import Counter
 
 def _slug_to_path(path: str) -> str:
     """
@@ -36,8 +37,13 @@ def _clean(rows: List[str]) -> List[str]:
     """
     cleaned_rows = []
     seen = set()
-    NON_ARTICLE_PATHS = ["/video/", "/author/", "authors", "/tag/", "/category/", "/gallery/", "/live/", "/podcast/",
-                         "/photo/", "/slideshow/", "/watch/", "/newsletters/"]
+    NON_ARTICLE_PATHS = ["/video/", "/videos/", "/author/", "/authors", "/tag/", "/category/",
+                         "/gallery/", "/live/", "/podcast/", "/photo/", "/slideshow/", "/watch/",
+                         "/newsletters/", "/person/", "/shows/", "/search", "/sitemap", "/about",
+                         "/contact", "/privacy", "/terms", "/rss", "/feed", "/wp-content/",
+                         "/api/", "/static/", "/assets/"]
+    NON_ARTICLE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js", ".json", ".xml", 
+                        ".pdf", ".ico", ".mp4", ".txt")
 
     for row in rows:
         url = row[0].strip()
@@ -49,7 +55,10 @@ def _clean(rows: List[str]) -> List[str]:
         if not any(domain in parsed.netloc for domain in ["foxnews.com", "nbcnews.com"]):
             continue
 
-        if parsed.path in ["", "/"] or any(word in parsed.path for word in NON_ARTICLE_PATHS):
+        path = parsed.path.lower()
+        if (path in ["", "/"] or 
+            path.endswith(NON_ARTICLE_EXTS) or 
+            any(word in path for word in NON_ARTICLE_PATHS)):
             continue
 
         seen.add(url)
@@ -84,6 +93,7 @@ def _fetch_url_rows() -> List[str]:
         "nbcnews.com": "https://www.nbcnews.com/robots.txt",
     }
 
+    # Fetch URLs of both Foxnews and NBC from robots.txt files and their sitemaps
     for domain, robots in sites.items():
         response = requests.get(robots, timeout=20)
 
@@ -95,8 +105,15 @@ def _fetch_url_rows() -> List[str]:
                     rows.extend([[url] for url in _get_urls(sitemap, domain)])
                 except (requests.RequestException, ET.ParseError) as e:
                     print(f"Skipping sitemap: {e}")
-    return rows
 
+    # Fetch additional URLs from the Wayback Machine for foxnews.com
+    max_rows = 10_000
+    r = requests.get("http://web.archive.org/cdx/search/cdx",
+                    params={"url": "foxnews.com/*", "output": "txt", "fl": "original", 
+                             "collapse": "urlkey", "filter": "statuscode:200", "limit": max_rows},
+                    timeout=30)
+    rows.extend([[u] for u in r.text.splitlines()])
+    return rows
 
 def _process(path: str, urls: List[str], labels: List[str]) -> None:
     with open(path, "r") as f:
@@ -145,8 +162,14 @@ def prepare_data(path: str) -> Tuple[torch.Tensor, torch.Tensor]:
     _process(path, urls, labels)
     return urls, labels
 
+def tmp(y):
+    counts = Counter(y)
+    print(counts)
+    print(set(y))
+
 if __name__ == "__main__":
     input_csv = "url_train.csv"
     X, y = prepare_data(input_csv)
     print(len(X))
     print(len(y))
+    tmp(y)
