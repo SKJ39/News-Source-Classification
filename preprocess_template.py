@@ -11,6 +11,13 @@ from xml.etree import ElementTree as ET
 from collections import Counter
 
 VALIDATION = True
+NON_ARTICLE_PATHS = ["/video/", "/videos/", "/author/", "/authors", "/tag/", "/category/",
+                         "/gallery/", "/live/", "/podcast/", "/photo/", "/slideshow/", "/watch/",
+                         "/newsletters/", "/person/", "/shows/", "/search", "/sitemap", "/about",
+                         "/contact", "/privacy", "/terms", "/rss", "/feed", "/wp-content/",
+                         "/api/", "/static/", "/assets/"]
+NON_ARTICLE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js", ".json", ".xml", 
+                    ".pdf", ".ico", ".mp4", ".txt")
 
 def _slug_to_path(path: str) -> str:
     """
@@ -39,13 +46,6 @@ def _clean(rows: List[str]) -> List[str]:
     """
     cleaned_rows = []
     seen = set()
-    NON_ARTICLE_PATHS = ["/video/", "/videos/", "/author/", "/authors", "/tag/", "/category/",
-                         "/gallery/", "/live/", "/podcast/", "/photo/", "/slideshow/", "/watch/",
-                         "/newsletters/", "/person/", "/shows/", "/search", "/sitemap", "/about",
-                         "/contact", "/privacy", "/terms", "/rss", "/feed", "/wp-content/",
-                         "/api/", "/static/", "/assets/"]
-    NON_ARTICLE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js", ".json", ".xml", 
-                        ".pdf", ".ico", ".mp4", ".txt")
 
     for row in rows:
         url = row[0].strip()
@@ -89,11 +89,8 @@ def _fetch_url_rows() -> List[str]:
     Fetch additional URLs from Fox News and NBC News feeds using sitemaps. 
     """
     rows = []
-
-    sites = {
-        "foxnews.com": "https://www.foxnews.com/robots.txt",
-        "nbcnews.com": "https://www.nbcnews.com/robots.txt",
-    }
+    sites = {"foxnews.com": "https://www.foxnews.com/robots.txt",
+             "nbcnews.com": "https://www.nbcnews.com/robots.txt"}
 
     # Fetch URLs of both Foxnews and NBC from robots.txt files and their sitemaps
     for domain, robots in sites.items():
@@ -108,7 +105,7 @@ def _fetch_url_rows() -> List[str]:
                 except (requests.RequestException, ET.ParseError) as e:
                     print(f"Skipping sitemap: {e}")
 
-    # Fetch additional URLs from the Wayback Machine for foxnews.com
+    # Fetch additional URLs from the Wayback Machine for Foxnews articles
     max_rows = 10_000
     r = requests.get("http://web.archive.org/cdx/search/cdx",
                     params={"url": "foxnews.com/*", "output": "txt", "fl": "original", 
@@ -145,6 +142,7 @@ def _process(path: str, urls: List[str], labels: List[str]) -> None:
         for u in random.sample(rows, min(100, len(rows))):
             print(u)
 
+    # Creating training dataset
     for row in rows:
         # Skip links from other websites. Links WITHOUT a website name are kept, 
         # with an empty label, so every row gets a prediction.
@@ -193,6 +191,7 @@ def tmp(y):
 if __name__ == "__main__":
     input_csv = "url_train.csv"
     X, y = prepare_data(input_csv)
-    print(len(X))
-    print(len(y))
-    tmp(y)
+    if VALIDATION:
+        print(len(X))
+        print(len(y))
+        tmp(y)
