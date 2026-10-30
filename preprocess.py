@@ -6,7 +6,6 @@ from urllib.parse import unquote, urlparse
 from typing import Any, List, Tuple
 import random
 import requests
-from bs4 import BeautifulSoup
 from xml.etree import ElementTree as ET
 from collections import Counter
 
@@ -79,11 +78,13 @@ def _get_urls(sitemap_url: str, domain: str) -> List[str]:
     urls = []
     response = requests.get(sitemap_url, timeout=20)
     response.raise_for_status()
-    soup = BeautifulSoup(response.content, "xml")
-    
-    # In a sitemap, URLs are typically found within <loc> tags
-    for loc in soup.find_all("loc"):
-        url = loc.text.strip()
+    root = ET.fromstring(response.content)
+
+    # Iterate through the XML elements and extract URLs that match the specified domain
+    for loc in root.iter():
+        if loc.tag.rsplit("}", 1)[-1] != "loc":
+            continue
+        url = (loc.text or "").strip()
         if urlparse(url).netloc.endswith(domain):
             urls.append(url)
     return urls
@@ -178,6 +179,16 @@ def prepare_data(path: str) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     if not os.path.isfile(path):
         raise FileNotFoundError(f"CSV not found: {path}")
+
+    # For evaluation, only use the provided CSV file
+    # For training, fetch additional data from the web feeds
+    with open(path, "r") as f:
+        rows = list(csv.reader(f))
+    if rows and rows[0] and rows[0][0].strip().lower() == "url":
+        rows = rows[1:]
+    if rows and all(len(row) == 1 and row[0].strip().startswith("/") for row in rows):
+        urls = [row[0].strip() for row in rows]
+        return urls, [""] * len(urls)
 
     urls: List[str] = []
     labels: List[str] = []
