@@ -1,4 +1,5 @@
 import csv
+import html
 import os
 import re
 from typing import List, Tuple
@@ -6,16 +7,21 @@ from urllib.parse import unquote, urlparse
 
 def _slug_to_path(path: str) -> str:
     """
-    Convert a URL path to a slug-like format.
-    The website name, section, and any word containing a digit (such as article IDs) are removed, 
-    leaving only the headline portion of each URL.
-    The leading (like https) and trailing extensions (like .html, .shtml, .php) are also removed. 
-    The resulting slug is returned in lowercase.
+    Convert the last URL path segment into normalized, lowercase headline tokens.
     """
     segments = [s for s in path.split("/") if s]
     last = unquote(segments[-1]) if segments else ""
+    last = html.unescape(last)
+    last = re.sub(
+        r"<(script|style)\b[^>]*>.*?</\1>",
+        " ",
+        last,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    last = re.sub(r"<[^>]*>", " ", last)
     last = re.sub(r"\.(html?|shtml|php)$", "", last, flags=re.IGNORECASE)
-    words = [w for w in re.split(r"[-_]+", last) if w and not re.search(r"\d", w)]
+    words = re.findall(r"[^\W_]+", last.casefold(), flags=re.UNICODE)
+    words = [word for word in words if not re.search(r"\d", word)]
     link = "/" + "-".join(words)
     return link
 

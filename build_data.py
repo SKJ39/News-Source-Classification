@@ -9,12 +9,9 @@ import requests
 from xml.etree import ElementTree as ET
 from collections import Counter
 
-VALIDATION = True
-# NON_ARTICLE_PATHS = ["/video/", "/videos/", "/author/", "/authors", "/tag/", "/category/",
-#                          "/gallery/", "/live/", "/podcast/", "/photo/", "/slideshow/", "/watch/",
-#                          "/newsletters/", "/person/", "/shows/", "/search", "/sitemap", "/about",
-#                          "/contact", "/privacy", "/terms", "/rss", "/feed", "/wp-content/",
-#                          "/api/", "/static/", "/assets/"]
+VALIDATION = False
+MIN_TOTAL_ARTICLES = 10_000
+MIN_FOX_SHARE_PERCENT = 45
 NON_ARTICLE_PATHS = ["/author/", "/authors/", "/tag/", "/category/", "/newsletters/"]
 NON_ARTICLE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js", ".json", ".xml", 
                     ".pdf", ".ico", ".mp4", ".txt")
@@ -27,12 +24,7 @@ def _slug_to_path(path: str) -> str:
     last = unquote(segments[-1]) if segments else ""
     # Decode URL text before removing markup and normalizing separators.
     last = html.unescape(last)
-    last = re.sub(
-        r"<(script|style)\b[^>]*>.*?</\1>",
-        " ",
-        last,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
+    last = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", " ", last, flags=re.IGNORECASE | re.DOTALL)
     last = re.sub(r"<[^>]*>", " ", last)
     last = re.sub(r"\.(html?|shtml|php)$", "", last, flags=re.IGNORECASE)
     # Keep words only; dropping digit-bearing terms removes common article IDs.
@@ -118,38 +110,53 @@ def _get_urls(sitemap_url: str, domain: str) -> List[str]:
 
 def _fetch_url_rows() -> List[List[str]]:
     """
-    Fetch additional URLs from Fox News and NBC News feeds using sitemaps. 
+    Fetch Fox News and NBC News URLs from their sitemaps and the Wayback Machine.
 
     Returns:
-    List of URL rows fetched from the sitemaps of Fox News and NBC News.
+    List of one-column URL rows, matching the format used by url_train.csv.
     """
     rows = []
     sites = {"foxnews.com": "https://www.foxnews.com/robots.txt",
              "nbcnews.com": "https://www.nbcnews.com/robots.txt"}
 
-    # Fetch URLs of both Foxnews and NBC from robots.txt files and their sitemaps
     for domain, robots in sites.items():
-        response = requests.get(robots, timeout=20)
+        try:
+            response = requests.get(robots, timeout=20)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            print(f"Skipping {domain} robots.txt: {e}")
+            continue
 
+        sitemaps = []
         for line in response.text.splitlines():
-            # Only start looking for the URL on the line that starts with "Sitemap:"
             if line.lower().startswith("sitemap:"):
-                sitemap = line.split(":", 1)[1].strip()
-                try:
-                    rows.extend([[url] for url in _get_urls(sitemap, domain)])
-                except (requests.RequestException, ET.ParseError) as e:
-                    print(f"Skipping sitemap: {e}")
+                sitemaps.append(line.split(":", 1)[1].strip())
 
-    # Fetch additional URLs from the Wayback Machine for Foxnews articles
+        if domain == "foxnews.com":
+            sitemaps.extend(["https://www.foxnews.com/sitemap.xml?type=articles",
+                             "https://www.foxnews.com/sitemap.xml?type=fastchanging"])
+
+        for sitemap in dict.fromkeys(sitemaps):
+            try:
+                rows.extend([[url] for url in _get_urls(sitemap, domain)])
+            except (requests.RequestException, ET.ParseError) as e:
+                print(f"Skipping sitemap {sitemap}: {e}")
+
     max_rows = 10_000
-    r = requests.get("http://web.archive.org/cdx/search/cdx",
-                    params={"url": "foxnews.com/*", "output": "txt", "fl": "original", 
-                             "collapse": "urlkey", "filter": "statuscode:200", "limit": max_rows},
-                    timeout=30)
-    rows.extend([[u] for u in r.text.splitlines()])
+    try:
+        response = requests.get("https://web.archive.org/cdx/search/cdx",
+                                params={"url": "foxnews.com/*", "output": "txt",
+                                        "fl": "original", "collapse": "urlkey",
+                                        "filter": "statuscode:200",
+                                        "limit": max_rows},
+                                timeout=30)
+        response.raise_for_status()
+        rows.extend([[url] for url in response.text.splitlines()])
+    except requests.RequestException as e:
+        print(f"Skipping Wayback archive: {e}")
     return rows
 
-def drop_nbc(urls, labels, n=1700):
+def drop_nbc(urls, labels, n=1000):
     """
     Drop a random sample of NBC rows to reduce class imbalance.
 
@@ -158,13 +165,14 @@ def drop_nbc(urls, labels, n=1700):
     labels (List[str]): List of corresponding labels for the URLs.
     n (int): Number of NBC rows to drop.
     """
+    random.seed(42)  # For reproducibility
     nbc = [idx for idx, domain in enumerate(labels) if domain == "NBC"]
     nbc_indices = set(random.sample(nbc, min(n, len(nbc))))
     urls = [url for idx, url in enumerate(urls) if idx not in nbc_indices]
     labels = [domain for idx, domain in enumerate(labels) if idx not in nbc_indices]
     return urls, labels
 
-def _process(path: str, urls: List[str], labels: List[str],) -> None:
+def _process(path: str, urls: List[str], labels: List[str], fetch_online: bool = True,) -> None:
     """
     Process the CSV file and fetch additional URLs from web feeds.
 
@@ -172,6 +180,7 @@ def _process(path: str, urls: List[str], labels: List[str],) -> None:
     path (str): Path to the CSV file containing URLs.
     urls (List[str]): List to store the processed URLs.
     labels (List[str]): List to store the corresponding labels for the URLs.
+    fetch_online (bool): Include eligible scraped URLs alongside source CSV rows.
     """
     with open(path, "r", newline="") as f:
         source_rows = list(csv.reader(f))
@@ -181,23 +190,52 @@ def _process(path: str, urls: List[str], labels: List[str],) -> None:
     # Keep supplied rows intact; cleaning and deduplication apply only to new scrape results.
     source_urls = {row[0].strip() for row in source_rows if row and row[0].strip()}
     source_headlines = set()
+    source_counts = Counter()
     for row in source_rows:
         if not row or not row[0].strip():
             continue
         parsed = urlparse(row[0].strip())
+        label = _label_from_host(parsed.netloc.lower())
+        if label:
+            source_counts[label] += 1
         headline = _slug_to_path(parsed.path)
         if headline == "/":
             headline = parsed.netloc.lower()
         source_headlines.add(headline)
 
-    scraped_rows = _clean(_fetch_url_rows())
-    # Avoid adding scraped copies of URLs or headlines already represented in the CSV.
-    new_scraped = [
-        row
-        for row in scraped_rows
-        if row[0].strip() not in source_urls
-        and _slug_to_path(urlparse(row[0].strip()).path) not in source_headlines
-    ]
+    scraped_rows = _clean(_fetch_url_rows()) if fetch_online else []
+    candidates_by_label = {label: [row for row in scraped_rows if row[0].strip() not in source_urls
+                                   and _slug_to_path(urlparse(row[0].strip()).path) not in source_headlines
+                                   and _label_from_host(urlparse(row[0].strip()).netloc.lower()) == label]
+                            for label in ("FoxNews", "NBC")}
+
+    # Add all available Fox rows, then cap NBC additions only if needed
+    # to keep Fox at or above the minimum share.
+    fox_rows = candidates_by_label["FoxNews"]
+    fox_total = source_counts["FoxNews"] + len(fox_rows)
+    max_nbc_total = (fox_total * (100 - MIN_FOX_SHARE_PERCENT) // MIN_FOX_SHARE_PERCENT)
+    nbc_rows_needed = max(0, max_nbc_total - source_counts["NBC"])
+    nbc_rows = candidates_by_label["NBC"][:nbc_rows_needed]
+    new_scraped = fox_rows + nbc_rows
+
+    final_total = fox_total + source_counts["NBC"] + len(nbc_rows)
+    fox_share_percent = fox_total * 100 / final_total if final_total else 0
+    if fetch_online and final_total < MIN_TOTAL_ARTICLES:
+        print(
+            f"Scraped data totals {final_total} articles, "
+            f"below the {MIN_TOTAL_ARTICLES}-article minimum."
+        )
+    if fetch_online and fox_share_percent < MIN_FOX_SHARE_PERCENT:
+        print(
+            f"Fox share is {fox_share_percent:.1f}%, below the "
+            f"{MIN_FOX_SHARE_PERCENT}% minimum; more Fox URLs are needed."
+        )
+    if fetch_online and len(nbc_rows) < len(candidates_by_label["NBC"]):
+        print(
+            f"Limited NBC additions to {len(nbc_rows)} to keep Fox's share "
+            f"at or above {MIN_FOX_SHARE_PERCENT}%."
+        )
+
     rows = source_rows + new_scraped
 
     # Data validation
@@ -219,7 +257,7 @@ def _process(path: str, urls: List[str], labels: List[str],) -> None:
         urls.append(link)
         labels.append(label)
 
-def build_training_data(path: str, n_drop_nbc: int = 0) -> Tuple[List[str], List[str]]:
+def build_training_data(path: str, n_drop_nbc: int = 0, fetch_online: bool = True) -> Tuple[List[str], List[str]]:
     """
     Build labeled data while preserving rows from the supplied CSV.
     Newly scraped URLs are filtered and deduplicated before being appended.
@@ -227,13 +265,15 @@ def build_training_data(path: str, n_drop_nbc: int = 0) -> Tuple[List[str], List
     Parameters:
     path (str): Path to the CSV file containing URLs.
     n_drop_nbc (int): Optional number of NBC rows to drop for explicit downsampling.
+    fetch_only (bool): Fetch and include scraped URLs when True; otherwise use only
+        rows from the supplied CSV.
     """
     if not os.path.isfile(path):
         raise FileNotFoundError(f"CSV not found: {path}")
 
     urls: List[str] = []
     labels: List[str] = []
-    _process(path, urls, labels)
+    _process(path, urls, labels, fetch_online=fetch_online)
     urls, labels = drop_nbc(urls, labels, n=n_drop_nbc)
     return urls, labels
 
