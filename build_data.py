@@ -9,7 +9,7 @@ import requests
 from xml.etree import ElementTree as ET
 from collections import Counter
 
-VALIDATION = True
+VALIDATION = False
 # NON_ARTICLE_PATHS = ["/video/", "/videos/", "/author/", "/authors", "/tag/", "/category/",
 #                          "/gallery/", "/live/", "/podcast/", "/photo/", "/slideshow/", "/watch/",
 #                          "/newsletters/", "/person/", "/shows/", "/search", "/sitemap", "/about",
@@ -116,7 +116,7 @@ def _get_urls(sitemap_url: str, domain: str) -> List[str]:
             urls.append(url)
     return urls
 
-def _fetch_url_rows() -> List[str]:
+def _fetch_url_rows() -> List[List[str]]:
     """
     Fetch additional URLs from Fox News and NBC News feeds using sitemaps. 
 
@@ -164,7 +164,15 @@ def drop_nbc(urls, labels, n=1700):
     labels = [domain for idx, domain in enumerate(labels) if idx not in nbc_indices]
     return urls, labels
 
-def _process(path: str, urls: List[str], labels: List[str]) -> None:
+def _process(
+    path: str,
+    urls: List[str],
+    labels: List[str],
+    *,
+    fetch_online: bool,
+    max_scraped_per_class: int,
+    seed: int,
+) -> None:
     """
     Process the CSV file and fetch additional URLs from web feeds.
 
@@ -172,6 +180,9 @@ def _process(path: str, urls: List[str], labels: List[str]) -> None:
     path (str): Path to the CSV file containing URLs.
     urls (List[str]): List to store the processed URLs.
     labels (List[str]): List to store the corresponding labels for the URLs.
+    fetch_online (bool): Whether to fetch additional URLs from web feeds.
+    max_scraped_per_class (int): Maximum scraped URLs to add for each label.
+    seed (int): Seed used to sample scraped URLs reproducibly.
     """
     with open(path, "r", newline="") as f:
         source_rows = list(csv.reader(f))
@@ -191,14 +202,28 @@ def _process(path: str, urls: List[str], labels: List[str]) -> None:
             headline = parsed.netloc.lower()
         source_headlines.add(headline)
 
-    scraped_rows = _clean(_fetch_url_rows())
-    # Avoid adding scraped copies of URLs or headlines already represented in the CSV.
-    rows = source_rows + [
-        row
-        for row in scraped_rows
-        if row[0].strip() not in source_urls
-        and _slug_to_path(urlparse(row[0].strip()).path) not in source_headlines
-    ]
+    rows = source_rows
+    if fetch_online and max_scraped_per_class > 0:
+        scraped_rows = _clean(_fetch_url_rows())
+        # Avoid adding scraped copies of URLs or headlines already represented in the CSV.
+        new_scraped = [
+            row
+            for row in scraped_rows
+            if row[0].strip() not in source_urls
+            and _slug_to_path(urlparse(row[0].strip()).path) not in source_headlines
+        ]
+
+        # Sample each outlet separately so sitemap order does not skew the labels.
+        scraped_by_label = {"FoxNews": [], "NBC": []}
+        for row in new_scraped:
+            label = _label_from_host(urlparse(row[0].strip()).netloc.lower())
+            if label in scraped_by_label:
+                scraped_by_label[label].append(row)
+
+        rng = random.Random(seed)
+        for label_rows in scraped_by_label.values():
+            rng.shuffle(label_rows)
+            rows.extend(label_rows[:max_scraped_per_class])
 
     # Data validation
     if VALIDATION:
@@ -219,7 +244,14 @@ def _process(path: str, urls: List[str], labels: List[str]) -> None:
         urls.append(link)
         labels.append(label)
 
-def build_training_data(path: str, n_drop_nbc: int = 0) -> Tuple[List[str], List[str]]:
+def build_training_data(
+    path: str,
+    n_drop_nbc: int = 0,
+    *,
+    fetch_online: bool = True,
+    max_scraped_per_class: int = 0,
+    seed: int = 42,
+) -> Tuple[List[str], List[str]]:
     """
     Build labeled data while preserving rows from the supplied CSV.
     Newly scraped URLs are filtered and deduplicated before being appended.
@@ -227,13 +259,25 @@ def build_training_data(path: str, n_drop_nbc: int = 0) -> Tuple[List[str], List
     Parameters:
     path (str): Path to the CSV file containing URLs.
     n_drop_nbc (int): Optional number of NBC rows to drop for explicit downsampling.
+    fetch_online (bool): Whether to fetch and include scraped examples.
+    max_scraped_per_class (int): Maximum scraped URLs to add for each label.
+    seed (int): Seed used to sample scraped URLs reproducibly.
     """
     if not os.path.isfile(path):
         raise FileNotFoundError(f"CSV not found: {path}")
+    if max_scraped_per_class < 0:
+        raise ValueError("max_scraped_per_class cannot be negative")
 
     urls: List[str] = []
     labels: List[str] = []
-    _process(path, urls, labels)
+    _process(
+        path,
+        urls,
+        labels,
+        fetch_online=fetch_online,
+        max_scraped_per_class=max_scraped_per_class,
+        seed=seed,
+    )
     urls, labels = drop_nbc(urls, labels, n=n_drop_nbc)
     return urls, labels
 
