@@ -5,7 +5,7 @@ from typing import List, Sequence, Tuple
 
 import numpy as np
 import torch
-from scipy.sparse import hstack
+from scipy.sparse import hstack, vstack
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 
@@ -43,15 +43,11 @@ def train(
     y_train: torch.Tensor,
     texts_val: Sequence[str],
     y_val: torch.Tensor,
-    *,
-    device: str = "cpu",
-    epochs: int = 5,
-    batch_size: int = 64,
-    lr: float = 1e-3,
-    weight_decay: float = 0.0,
+    c_value: float = 3.0,
 ) -> None:
-    """Train the TF-IDF linear head using sparse features."""
-    del device, batch_size, lr
+    """Fit the sparse TF-IDF classifier and refit its selected model on all data."""
+    if c_value <= 0:
+        raise ValueError("C must be greater than zero")
 
     if len(set(y_train.tolist())) != 2:
         raise RuntimeError("Training data must contain both FoxNews and NBC labels")
@@ -60,11 +56,18 @@ def train(
     val_features = transform_texts(model, texts_val)
 
     classifier = LogisticRegression(
-        C=1.0 / max(weight_decay, 1e-12) if weight_decay > 0 else 1.0,
+        C=c_value,
         solver="lbfgs",
-        max_iter=max(100, epochs * 20),
+        max_iter=500,
     )
     classifier.fit(train_features, y_train.numpy())
+
+    val_acc = float(np.mean(classifier.predict(val_features) == y_val.numpy()))
+    print(f"TF-IDF logistic regression | holdout acc {val_acc:.4f} | C {c_value:g}")
+
+    all_features = vstack([train_features, val_features], format="csr")
+    all_targets = torch.cat([y_train, y_val]).numpy()
+    classifier.fit(all_features, all_targets)
 
     classes = classifier.classes_.tolist()
     if classes == [0, 1]:
@@ -83,28 +86,20 @@ def train(
         [-0.5 * bias, 0.5 * bias], dtype=torch.float32
     ))
 
-    train_acc = float(np.mean(classifier.predict(train_features) == y_train.numpy()))
-    val_acc = float(np.mean(classifier.predict(val_features) == y_val.numpy()))
-    print(f"TF-IDF logistic regression | train acc {train_acc:.4f} | val acc {val_acc:.4f}")
-
 
 def main():
     parser = argparse.ArgumentParser(description="Train fixed-dimensional word+character TF-IDF classifier")
     parser.add_argument("--csv", type=str, default="url_train.csv", help="Path to the training URL CSV")
     parser.add_argument("--output", type=str, default="./model.pt", help="Output path to save trained model")
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--weight-decay", type=float, default=0.0)
+    parser.add_argument("--c", type=float, default=3.0, help="Logistic-regression inverse regularization strength")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])
     parser.add_argument("--no-online", action="store_true", help="Train only from the supplied CSV")
     args = parser.parse_args()
 
     set_seed(args.seed)
 
     # Load and prepare data
-    texts, labels = build_training_data(args.csv, fetch_online=not args.no_online)
+    texts, labels = build_training_data(args.csv,n_drop_nbc=0)
     if len(texts) == 0:
         raise RuntimeError("No data produced by preprocess. Ensure URLs map to known outlets.")
 
@@ -124,11 +119,7 @@ def main():
         y_train=y_train,
         texts_val=X_val,
         y_val=y_val,
-        device=args.device,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
+        c_value=args.c,
     )
 
     # Save only the parameters required by model_tfidf.NewsClassifier.
@@ -141,5 +132,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
