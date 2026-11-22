@@ -59,7 +59,7 @@ def train(model: NewsClassifier, texts_train: Sequence[str], y_train: torch.Tens
     train_features = transform_texts(model, texts_train)
     val_features = transform_texts(model, texts_val)
 
-    classifier = LogisticRegression(C=c_value, solver="lbfgs", max_iter=500)
+    classifier = LogisticRegression(C=c_value, solver="lbfgs", max_iter=1000)
     classifier.fit(train_features, y_train.numpy())
 
     val_acc = float(np.mean(classifier.predict(val_features) == y_val.numpy()))
