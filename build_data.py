@@ -245,7 +245,6 @@ def tmp(y):
 if __name__ == "__main__":
     input_csv = "url_train.csv"
     X, y = build_training_data(input_csv)
-    if VALIDATION:
-        print(len(X))
-        print(len(y))
-        tmp(y)
+    print(len(X))
+    print(len(y))
+    tmp(y)
