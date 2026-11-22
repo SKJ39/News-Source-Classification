@@ -2,18 +2,19 @@ import os
 import csv
 import re
 from urllib.parse import unquote, urlparse
-from typing import Any, List, Tuple
+from typing import List, Tuple
 import random
 import requests
 from xml.etree import ElementTree as ET
 from collections import Counter
 
 VALIDATION = True
-NON_ARTICLE_PATHS = ["/video/", "/videos/", "/author/", "/authors", "/tag/", "/category/",
-                         "/gallery/", "/live/", "/podcast/", "/photo/", "/slideshow/", "/watch/",
-                         "/newsletters/", "/person/", "/shows/", "/search", "/sitemap", "/about",
-                         "/contact", "/privacy", "/terms", "/rss", "/feed", "/wp-content/",
-                         "/api/", "/static/", "/assets/"]
+# NON_ARTICLE_PATHS = ["/video/", "/videos/", "/author/", "/authors", "/tag/", "/category/",
+#                          "/gallery/", "/live/", "/podcast/", "/photo/", "/slideshow/", "/watch/",
+#                          "/newsletters/", "/person/", "/shows/", "/search", "/sitemap", "/about",
+#                          "/contact", "/privacy", "/terms", "/rss", "/feed", "/wp-content/",
+#                          "/api/", "/static/", "/assets/"]
+NON_ARTICLE_PATHS = ["/author/", "/authors/", "/tag/", "/category/", "/newsletters/"]
 NON_ARTICLE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js", ".json", ".xml", 
                     ".pdf", ".ico", ".mp4", ".txt")
 
@@ -48,17 +49,19 @@ def _label_from_host(host: str) -> str:
         return "NBC"
     return ""
 
-def _clean(rows: List[str]) -> List[str]:
+def _clean(rows: List[List[str]]) -> List[List[str]]:
     """
-    Clean the list of URL rows by filtering out duplicates, unwanted domains, and irrelevant paths.
+    Filter scraped URL rows, dropping duplicates, unwanted domains, and irrelevant paths.
 
     Parameters:
-    rows (List[str]): List of URL rows to be cleaned.
+    rows (List[List[str]]): URL rows to be filtered.
     """
     cleaned_rows = []
     seen = set()
 
     for row in rows:
+        if not row or not row[0].strip():
+            continue
         url = row[0].strip()
         parsed = urlparse(url)
 
@@ -134,7 +137,7 @@ def _fetch_url_rows() -> List[str]:
     rows.extend([[u] for u in r.text.splitlines()])
     return rows
 
-def drop_nbc(urls, labels, n=1000):
+def drop_nbc(urls, labels, n=1700):
     """
     Drop a random sample of NBC rows to reduce class imbalance.
 
@@ -149,7 +152,7 @@ def drop_nbc(urls, labels, n=1000):
     labels = [domain for idx, domain in enumerate(labels) if idx not in nbc_indices]
     return urls, labels
 
-def _process(path: str, urls: List[str], labels: List[str], fetch_online: bool) -> None:
+def _process(path: str, urls: List[str], labels: List[str]) -> None:
     """
     Process the CSV file and fetch additional URLs from web feeds.
 
@@ -157,16 +160,16 @@ def _process(path: str, urls: List[str], labels: List[str], fetch_online: bool) 
     path (str): Path to the CSV file containing URLs.
     urls (List[str]): List to store the processed URLs.
     labels (List[str]): List to store the corresponding labels for the URLs.
-    fetch_online (bool): Whether to fetch additional URLs from online sources.
     """
-    with open(path, "r") as f:
-        rows = list(csv.reader(f))
-    if rows and rows[0] and rows[0][0].strip().lower() == "url":
-        rows = rows[1:]
-    if fetch_online:
-        rows.extend(_fetch_url_rows())
-    # Clean the list of URLS
-    rows = _clean(rows)
+    with open(path, "r", newline="") as f:
+        source_rows = list(csv.reader(f))
+    if source_rows and source_rows[0] and source_rows[0][0].strip().lower() == "url":
+        source_rows = source_rows[1:]
+
+    rows = source_rows
+    source_urls = {row[0].strip() for row in source_rows if row and row[0].strip()}
+    scraped_rows = _clean(_fetch_url_rows())
+    rows = source_rows + [row for row in scraped_rows if row[0].strip() not in source_urls]
 
     # Data validation
     if VALIDATION:
@@ -189,22 +192,21 @@ def _process(path: str, urls: List[str], labels: List[str], fetch_online: bool) 
         urls.append(link)
         labels.append(label)
 
-def build_training_data(path: str, *, fetch_online: bool = True, n_drop_nbc: int = 1000) -> Tuple[List[str], List[str]]:
+def build_training_data(path: str, n_drop_nbc: int = 0) -> Tuple[List[str], List[str]]:
     """
-    Build filtered, labeled data for training. This function may fetch more URLs,
-    remove duplicates and non-article links, and balance the training classes.
+    Build labeled data while preserving rows from the supplied CSV.
+    Newly scraped URLs are filtered and deduplicated before being appended.
 
     Parameters:
     path (str): Path to the CSV file containing URLs.
-    fetch_online (bool): Whether to fetch additional URLs from online sources.
-    n_drop_nbc (int): Number of NBC rows to drop to reduce class imbalance.
+    n_drop_nbc (int): Optional number of NBC rows to drop for explicit downsampling.
     """
     if not os.path.isfile(path):
         raise FileNotFoundError(f"CSV not found: {path}")
 
     urls: List[str] = []
     labels: List[str] = []
-    _process(path, urls, labels, fetch_online=fetch_online)
+    _process(path, urls, labels)
     urls, labels = drop_nbc(urls, labels, n=n_drop_nbc)
     return urls, labels
 
