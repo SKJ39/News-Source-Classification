@@ -82,7 +82,7 @@ def _copy_classifier_weights(model: NewsClassifier, classifier: LinearSVC) -> No
 
 
 def train(model: NewsClassifier, texts_train: Sequence[str], labels_train: torch.Tensor, texts_val: Sequence[str], 
-          labels_val: torch.Tensor, c_value: float = 1.0, seed: int = 42,) -> None:
+          labels_val: torch.Tensor, c_value: float = 0.6, seed: int = 42,) -> None:
     """
     Fit the SVM, report held-out accuracy, and store full-data weights.
     
@@ -117,16 +117,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train a hashed-feature linear SVM")
     parser.add_argument("--csv", default="url_train.csv", help="Training URL CSV")
     parser.add_argument("--output", default="./model_svm.pt", help="Path for the trained PyTorch state_dict")
-    parser.add_argument("--c", type=float, default=1.0, help="LinearSVC regularization parameter")
+    parser.add_argument("--c", type=float, default=0.6, help="LinearSVC regularization parameter")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--no-online", action="store_true", help="Train only from the supplied CSV without scraping additional URLs")
     args = parser.parse_args()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    texts, labels = build_training_data(args.csv, n_drop_nbc=0, fetch_online=not args.no_online)
+    texts, labels = build_training_data(args.csv, n_drop_nbc=0, fetch_online=False)
     if not texts:
         raise RuntimeError("No training rows were produced from the supplied CSV.")
 

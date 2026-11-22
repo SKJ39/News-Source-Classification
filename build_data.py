@@ -218,24 +218,6 @@ def _process(path: str, urls: List[str], labels: List[str], fetch_online: bool =
     nbc_rows = candidates_by_label["NBC"][:nbc_rows_needed]
     new_scraped = fox_rows + nbc_rows
 
-    final_total = fox_total + source_counts["NBC"] + len(nbc_rows)
-    fox_share_percent = fox_total * 100 / final_total if final_total else 0
-    if fetch_online and final_total < MIN_TOTAL_ARTICLES:
-        print(
-            f"Scraped data totals {final_total} articles, "
-            f"below the {MIN_TOTAL_ARTICLES}-article minimum."
-        )
-    if fetch_online and fox_share_percent < MIN_FOX_SHARE_PERCENT:
-        print(
-            f"Fox share is {fox_share_percent:.1f}%, below the "
-            f"{MIN_FOX_SHARE_PERCENT}% minimum; more Fox URLs are needed."
-        )
-    if fetch_online and len(nbc_rows) < len(candidates_by_label["NBC"]):
-        print(
-            f"Limited NBC additions to {len(nbc_rows)} to keep Fox's share "
-            f"at or above {MIN_FOX_SHARE_PERCENT}%."
-        )
-
     rows = source_rows + new_scraped
 
     # Data validation
