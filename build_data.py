@@ -1,5 +1,6 @@
 import os
 import csv
+import html
 import re
 from urllib.parse import unquote, urlparse
 from typing import List, Tuple
@@ -20,19 +21,23 @@ NON_ARTICLE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js", ".js
 
 def _slug_to_path(path: str) -> str:
     """
-    Convert a URL path to a slug-like format.
-    The website name, section, and any word containing a digit (such as article IDs) are removed, 
-    leaving only the headline portion of each URL.
-    The leading (like https) and trailing extensions (like .html, .shtml, .php) are also removed. 
-    The resulting slug is returned in lowercase.
-
-    Parameters:
-    path (str): The URL path to be converted.
+    Convert the last URL path segment into normalized, lowercase headline tokens.
     """
     segments = [s for s in path.split("/") if s]
     last = unquote(segments[-1]) if segments else ""
+    # Decode URL text before removing markup and normalizing separators.
+    last = html.unescape(last)
+    last = re.sub(
+        r"<(script|style)\b[^>]*>.*?</\1>",
+        " ",
+        last,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    last = re.sub(r"<[^>]*>", " ", last)
     last = re.sub(r"\.(html?|shtml|php)$", "", last, flags=re.IGNORECASE)
-    words = [w for w in re.split(r"[-_]+", last) if w and not re.search(r"\d", w)]
+    # Keep words only; dropping digit-bearing terms removes common article IDs.
+    words = re.findall(r"[^\W_]+", last.casefold(), flags=re.UNICODE)
+    words = [word for word in words if not re.search(r"\d", word)]
     link = "/" + "-".join(words)
     return link
 
@@ -57,7 +62,8 @@ def _clean(rows: List[List[str]]) -> List[List[str]]:
     rows (List[List[str]]): URL rows to be filtered.
     """
     cleaned_rows = []
-    seen = set()
+    seen_urls = set()
+    seen_headlines = set()
 
     for row in rows:
         if not row or not row[0].strip():
@@ -65,7 +71,7 @@ def _clean(rows: List[List[str]]) -> List[List[str]]:
         url = row[0].strip()
         parsed = urlparse(url)
 
-        if url in seen:
+        if url in seen_urls:
             continue
 
         if not any(domain in parsed.netloc for domain in ["foxnews.com", "nbcnews.com"]):
@@ -77,7 +83,13 @@ def _clean(rows: List[List[str]]) -> List[List[str]]:
             any(word in path for word in NON_ARTICLE_PATHS)):
             continue
 
-        seen.add(url)
+        # Different URL variants can share the same headline; retain one scraped row.
+        headline = _slug_to_path(parsed.path)
+        if headline == "/" or headline in seen_headlines:
+            continue
+
+        seen_urls.add(url)
+        seen_headlines.add(headline)
         cleaned_rows.append([url])
 
     return cleaned_rows
@@ -166,28 +178,43 @@ def _process(path: str, urls: List[str], labels: List[str]) -> None:
     if source_rows and source_rows[0] and source_rows[0][0].strip().lower() == "url":
         source_rows = source_rows[1:]
 
+    # Keep supplied rows intact; cleaning and deduplication apply only to new scrape results.
     rows = source_rows
     source_urls = {row[0].strip() for row in source_rows if row and row[0].strip()}
+    source_headlines = set()
+    for row in source_rows:
+        if not row or not row[0].strip():
+            continue
+        parsed = urlparse(row[0].strip())
+        headline = _slug_to_path(parsed.path)
+        if headline == "/":
+            headline = parsed.netloc.lower()
+        source_headlines.add(headline)
+
     scraped_rows = _clean(_fetch_url_rows())
-    rows = source_rows + [row for row in scraped_rows if row[0].strip() not in source_urls]
+    # Avoid adding scraped copies of URLs or headlines already represented in the CSV.
+    rows = source_rows + [
+        row
+        for row in scraped_rows
+        if row[0].strip() not in source_urls
+        and _slug_to_path(urlparse(row[0].strip()).path) not in source_headlines
+    ]
 
     # Data validation
     if VALIDATION:
         for u in random.sample(rows, min(100, len(rows))):
             print(u)
 
-    # Creating training dataset
     for row in rows:
-        # Skip links from other websites. Links WITHOUT a website name are kept, 
-        # with an empty label, so every row gets a prediction.
         if not row or not row[0].strip():
             continue
         parsed = urlparse(row[0].strip())
-        label = _label_from_host(parsed.netloc.lower())         # netloc is the domain name, e.g., "www.foxnews.com"
+        label = _label_from_host(parsed.netloc.lower())
         if parsed.netloc and not label:
             continue
         link = _slug_to_path(parsed.path)
-        if not link:
+        if link == "/":
+            # Preserve a usable feature for valid URLs that have no headline slug.
             link = parsed.netloc.lower()
         urls.append(link)
         labels.append(label)

@@ -37,15 +37,19 @@ def transform_texts(model: NewsClassifier, texts: Sequence[str]):
     return hstack([word_features, char_features], format="csr")
 
 
-def train(
-    model: NewsClassifier,
-    texts_train: Sequence[str],
-    y_train: torch.Tensor,
-    texts_val: Sequence[str],
-    y_val: torch.Tensor,
-    c_value: float = 3.0,
-) -> None:
-    """Fit the sparse TF-IDF classifier and refit its selected model on all data."""
+def train(model: NewsClassifier, texts_train: Sequence[str], y_train: torch.Tensor,
+          texts_val: Sequence[str], y_val: torch.Tensor, c_value: float = 3.0,) -> None:
+    """
+    Fit the sparse TF-IDF classifier and refit its selected model on all data.
+    
+    Parameters:
+    model (NewsClassifier): The NewsClassifier instance with TF-IDF vectorizers.
+    texts_train (Sequence[str]): Training text data.
+    y_train (torch.Tensor): Training labels.
+    texts_val (Sequence[str]): Validation text data.
+    y_val (torch.Tensor): Validation labels.
+    c_value (float): Inverse regularization strength for logistic regression.
+    """
     if c_value <= 0:
         raise ValueError("C must be greater than zero")
 
@@ -55,15 +59,11 @@ def train(
     train_features = transform_texts(model, texts_train)
     val_features = transform_texts(model, texts_val)
 
-    classifier = LogisticRegression(
-        C=c_value,
-        solver="lbfgs",
-        max_iter=500,
-    )
+    classifier = LogisticRegression(C=c_value, solver="lbfgs", max_iter=500)
     classifier.fit(train_features, y_train.numpy())
 
     val_acc = float(np.mean(classifier.predict(val_features) == y_val.numpy()))
-    print(f"TF-IDF logistic regression | holdout acc {val_acc:.4f} | C {c_value:g}")
+    print(f"TF-IDF Logistic Regression | validation accuracy: {val_acc:.4f}")
 
     all_features = vstack([train_features, val_features], format="csr")
     all_targets = torch.cat([y_train, y_val]).numpy()
@@ -80,11 +80,9 @@ def train(
 
     # Two logits encode the binary decision boundary classifier.coef*x+bias.
     model.linear.weight.data.copy_(torch.tensor(
-        np.vstack([-0.5 * coef, 0.5 * coef]), dtype=torch.float32
-    ))
+        np.vstack([-0.5 * coef, 0.5 * coef]), dtype=torch.float32))
     model.linear.bias.data.copy_(torch.tensor(
-        [-0.5 * bias, 0.5 * bias], dtype=torch.float32
-    ))
+        [-0.5 * bias, 0.5 * bias], dtype=torch.float32))
 
 
 def main():
@@ -113,14 +111,7 @@ def main():
     model = NewsClassifier()
 
     # Train
-    train(
-        model=model,
-        texts_train=X_train,
-        y_train=y_train,
-        texts_val=X_val,
-        y_val=y_val,
-        c_value=args.c,
-    )
+    train(model=model, texts_train=X_train, y_train=y_train,texts_val=X_val, y_val=y_val, c_value=args.c,)
 
     # Save only the parameters required by model_tfidf.NewsClassifier.
     out_dir = os.path.dirname(os.path.abspath(args.output))
