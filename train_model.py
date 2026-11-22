@@ -13,7 +13,7 @@ import torch.nn as nn
 from sklearn.model_selection import train_test_split
 
 from model import NewsClassifier
-from preprocess import prepare_data
+from build_data import build_training_data
 
 
 def set_seed(seed: int = 42):
@@ -152,7 +152,7 @@ def main():
     set_seed(args.seed)
 
     # Load and prepare data
-    texts, labels = prepare_data(args.csv)
+    texts, labels = build_training_data(args.csv)
     if len(texts) == 0:
         raise RuntimeError("No data produced by preprocess. Ensure URLs map to known outlets.")
 
