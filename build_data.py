@@ -75,6 +75,11 @@ def _clean(rows: List[List[str]]) -> List[List[str]]:
             any(word in path for word in NON_ARTICLE_PATHS)):
             continue
 
+        segments = [segment for segment in parsed.path.split("/") if segment]
+        headline_segment = unquote(segments[-1]) if segments else ""
+        if "&" in headline_segment or "=" in headline_segment:
+            continue
+
         # Different URL variants can share the same headline; retain one scraped row.
         headline = _slug_to_path(parsed.path)
         if headline == "/" or headline in seen_headlines:
@@ -142,18 +147,18 @@ def _fetch_url_rows() -> List[List[str]]:
             except (requests.RequestException, ET.ParseError) as e:
                 print(f"Skipping sitemap {sitemap}: {e}")
 
-    max_rows = 10_000
-    try:
-        response = requests.get("https://web.archive.org/cdx/search/cdx",
-                                params={"url": "foxnews.com/*", "output": "txt",
-                                        "fl": "original", "collapse": "urlkey",
-                                        "filter": "statuscode:200",
-                                        "limit": max_rows},
-                                timeout=30)
-        response.raise_for_status()
-        rows.extend([[url] for url in response.text.splitlines()])
-    except requests.RequestException as e:
-        print(f"Skipping Wayback archive: {e}")
+    # max_rows = 10_000
+    # try:
+    #     response = requests.get("https://web.archive.org/cdx/search/cdx",
+    #                             params={"url": "foxnews.com/*", "output": "txt",
+    #                                     "fl": "original", "collapse": "urlkey",
+    #                                     "filter": "statuscode:200",
+    #                                     "limit": max_rows},
+    #                             timeout=30)
+    #     response.raise_for_status()
+    #     rows.extend([[url] for url in response.text.splitlines()])
+    # except requests.RequestException as e:
+    #     print(f"Skipping Wayback archive: {e}")
     return rows
 
 def drop_nbc(urls, labels, n=1000):
