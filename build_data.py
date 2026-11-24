@@ -186,13 +186,13 @@ def _process(path: str, urls: List[str], labels: List[str], fetch_online: bool =
     scraped_rows = _clean(_fetch_url_rows()) if fetch_online else []
     candidates_by_label = [row for row in scraped_rows if row[0].strip() not in source_urls
                            and _slug_to_path(urlparse(row[0].strip()).path) not in source_headlines]
-
-    rows = source_rows + candidates_by_label
-
-    # Data validation
+    
+    # Validate scraped URLs
     if VALIDATION:
         for u in random.sample(rows, min(100, len(rows))):
             print(u)
+
+    rows = source_rows + candidates_by_label
 
     # Build dataset (feature: URL path; label: FoxNews or NBC)
     for row in rows:
