@@ -218,3 +218,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project: cached sitemap XML (~600MB), regenerate with scrape_matched.py
+data/raw_sitemaps/
+
+# macOS
+.DS_Store
+
+# Regenerable intermediates (re-created by train_tfidf.py / ensemble.py)
+data/**/best_trainval.pt
+data/tfidf/scraped_used.csv
+data/tfidf/trainval.csv
+data/tfidf/test.csv
